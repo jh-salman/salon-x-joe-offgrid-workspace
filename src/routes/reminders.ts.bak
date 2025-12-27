@@ -1,0 +1,91 @@
+import { Router } from 'express'
+import { body, validationResult } from 'express-validator'
+import { authenticate, requireTenant, requireOwnerOrAdmin, AuthRequest } from '../middleware/authenticate'
+import { requireActiveSubscription } from '../middleware/subscription'
+import { PrismaClient } from '@prisma/client'
+
+const router = Router()
+const prisma = new PrismaClient()
+
+// Apply base middleware
+router.use(authenticate)
+router.use(requireTenant)
+router.use(requireActiveSubscription)
+
+// GET /api/reminders/settings
+router.get('/settings', async (req: AuthRequest, res, next) => {
+  try {
+    const settings = await prisma.tenantReminderSettings.findUnique({
+      where: { tenantId: req.user!.tenantId! }
+    })
+
+    // Return default settings if none exist
+    const defaultSettings = {
+      remindersEnabled: true,
+      allowSMS: true,
+      allowEmail: true,
+      sendOnCreate: true,
+      send3DaysBefore: true,
+      send1HourBefore: true,
+      offset3DaysMin: 4320,
+      offset1HourMin: 60,
+      tplOnCreate: "🎉 Appointment Confirmed!\n\nHi {{clientName}}, your appointment with {{staff}} for {{service}} is confirmed for {{date}} at {{time}}.\n\n✅ Confirm: {{confirmLink}}\n📅 Reschedule: {{rescheduleLink}}\n\nThank you for choosing {{tenantName}}!\nVisit: {{websiteLink}}\n\n{{tenantPhone}}",
+      tpl3DaysBefore: "⏰ Appointment Reminder\n\nHi {{clientName}}, you have an appointment with {{staff}} for {{service}} in 3 days on {{date}} at {{time}}.\n\n✅ Confirm: {{confirmLink}}\n📅 Reschedule: {{rescheduleLink}}\n\n{{tenantName}}\n{{websiteLink}}",
+      tpl1HourBefore: "🚀 Appointment in 1 Hour!\n\nHi {{clientName}}, your appointment with {{staff}} for {{service}} starts in 1 hour at {{time}}.\n\n✅ I'm Coming: {{confirmLink}}\n🗺️ Directions: {{directionsLink}}\n\nSee you soon at {{tenantName}}!\n{{tenantPhone}}"
+    }
+
+    res.json({
+      success: true,
+      data: settings || defaultSettings
+    })
+  } catch (error) {
+    next(error)
+  }
+})
+
+// PUT /api/reminders/settings
+router.put('/settings', 
+  requireOwnerOrAdmin,
+  [
+    body('remindersEnabled').optional().isBoolean(),
+    body('allowSMS').optional().isBoolean(),
+    body('allowEmail').optional().isBoolean(),
+    body('sendOnCreate').optional().isBoolean(),
+    body('send3DaysBefore').optional().isBoolean(),
+    body('send1HourBefore').optional().isBoolean(),
+    body('offset3DaysMin').optional().isInt({ min: 60, max: 10080 }), // 1 hour to 7 days
+    body('offset1HourMin').optional().isInt({ min: 5, max: 1440 }), // 5 minutes to 24 hours
+    body('tplOnCreate').optional().isString().isLength({ min: 10, max: 1000 }),
+    body('tpl3DaysBefore').optional().isString().isLength({ min: 10, max: 1000 }),
+    body('tpl1HourBefore').optional().isString().isLength({ min: 10, max: 1000 })
+  ],
+  async (req: AuthRequest, res, next) => {
+    try {
+      const errors = validationResult(req)
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ 
+          success: false,
+          errors: errors.array() 
+        })
+      }
+
+      const settings = await prisma.tenantReminderSettings.upsert({
+        where: { tenantId: req.user!.tenantId! },
+        update: req.body,
+        create: {
+          tenantId: req.user!.tenantId!,
+          ...req.body
+        }
+      })
+
+      res.json({
+        success: true,
+        data: settings
+      })
+    } catch (error) {
+      next(error)
+    }
+  }
+)
+
+export default router

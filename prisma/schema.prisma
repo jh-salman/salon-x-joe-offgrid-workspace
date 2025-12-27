@@ -1,0 +1,491 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x", "linux-musl-arm64-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                   String            @id @default(cuid())
+  email                String            @unique
+  passwordHash         String
+  firstName            String
+  lastName             String
+  phone                String?
+  country              Country           @default(BD)
+  status               UserStatus        @default(PENDING_VERIFICATION)
+  emailVerified        Boolean           @default(false)
+  phoneVerified        Boolean           @default(false)
+  loginAttempts        Int               @default(0)
+  lockedUntil          DateTime?
+  lastLoginAt          DateTime?
+  faceDataHash         String?
+  faceEnabled          Boolean           @default(false)
+  faceData             Json?
+  otpMethod            OTPType?
+  otpCode              String?
+  otpExpiresAt         DateTime?
+  otpVerified          Boolean           @default(false)
+  resetPasswordToken   String?
+  resetPasswordExpires DateTime?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  otpRecords           OtpRecord[]
+  authSessions         UserAuthSession[]
+  
+  // Brand and MLM Relations
+  ownedBrands          Brand[]                    @relation("BrandOwner")
+  brandMemberships     BrandMember[]              @relation("BrandMemberships")
+  brandInvitations     BrandInvitation[]          @relation("BrandInvitations")
+  staffProfiles        Staff[]                    @relation("StaffProfiles")
+  referrerReferrals    Referral[]                 @relation("ReferrerReferrals")
+  referredUsers        Referral[]                 @relation("ReferredUsers")
+  userCommissions      Commission[]               @relation("UserCommissions")
+  userTokens           UserToken?                 @relation("UserTokens")
+
+  @@map("users")
+}
+
+model OtpRecord {
+  id          String     @id @default(cuid())
+  userId      String?
+  email       String?
+  phone       String?
+  country     Country    @default(BD)
+  otpCode     String
+  otpType     OTPType
+  purpose     OTPPurpose
+  isUsed      Boolean    @default(false)
+  isExpired   Boolean    @default(false)
+  attempts    Int        @default(0)
+  maxAttempts Int        @default(3)
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  user        User?      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("otp_records")
+}
+
+model UserAuthSession {
+  id             String     @id @default(cuid())
+  userId         String
+  sessionToken   String     @unique
+  refreshToken   String     @unique
+  deviceId       String?
+  deviceType     String?
+  userAgent      String?
+  ipAddress      String?
+  country        String?
+  city           String?
+  authMethod     AuthMethod @default(EMAIL_PASSWORD)
+  isActive       Boolean    @default(true)
+  expiresAt      DateTime
+  lastActivityAt DateTime   @default(now())
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  user           User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_auth_sessions")
+}
+
+enum Country {
+  BD
+  USA
+}
+
+enum OTPType {
+  EMAIL
+  SMS
+}
+
+enum OTPPurpose {
+  SIGNUP_VERIFICATION
+  LOGIN_VERIFICATION
+  PASSWORD_RESET
+  PHONE_VERIFICATION
+}
+
+enum AuthMethod {
+  EMAIL_PASSWORD
+  FACE_RECOGNITION
+  FINGERPRINT
+  PIN
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
+}
+
+// Brand Management Models
+model Brand {
+  id                String            @id @default(cuid())
+  name              String
+  subdomain         String            @unique
+  description       String?
+  email             String?
+  phone             String?
+  website           String?
+  address           String?
+  city              String?
+  state             String?
+  zipCode           String?
+  country           String            @default("Bangladesh")
+  businessHours     Json?
+  logo              String?
+  coverImage        String?
+  status            BrandStatus       @default(ACTIVE)
+  subscriptionPlan  SubscriptionPlan  @default(BASIC)
+  subscriptionEnds  DateTime?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  
+  // Relations
+  ownerId           String
+  owner             User              @relation("BrandOwner", fields: [ownerId], references: [id])
+  members           BrandMember[]
+  invitations       BrandInvitation[]
+  categories        BrandCategory[]
+  services          BrandService[]
+  staff             Staff[]
+  appointments      Appointment[]
+  clients           Client[]
+  payments          Payment[]
+  commissions       Commission[]
+  referrals         Referral[]
+  
+  @@map("brands")
+}
+
+model BrandMember {
+  id          String        @id @default(cuid())
+  brandId     String
+  userId      String
+  role        BrandRole     @default(STAFF)
+  status      MemberStatus  @default(ACTIVE)
+  joinedAt    DateTime      @default(now())
+  invitedBy   String?
+  permissions Json?
+  
+  // Relations
+  brand       Brand         @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  user        User          @relation("BrandMemberships", fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([brandId, userId])
+  @@map("brand_members")
+}
+
+model BrandInvitation {
+  id          String            @id @default(cuid())
+  brandId     String
+  email       String
+  role        BrandRole         @default(STAFF)
+  status      InvitationStatus  @default(PENDING)
+  token       String            @unique
+  invitedBy   String
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  
+  // Relations
+  brand       Brand             @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  inviter     User              @relation("BrandInvitations", fields: [invitedBy], references: [id])
+  
+  @@unique([brandId, email])
+  @@map("brand_invitations")
+}
+
+model BrandCategory {
+  id          String    @id @default(cuid())
+  brandId     String
+  name        String
+  description String?
+  color       String?   // Hex color code for UI
+  icon        String?   // Icon name or URL
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  // Relations
+  brand       Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  services    BrandService[]
+  
+  @@unique([brandId, name])
+  @@map("brand_categories")
+}
+
+model BrandService {
+  id          String    @id @default(cuid())
+  brandId     String
+  categoryId  String?
+  name        String
+  description String?
+  duration    Int       // in minutes
+  price       Float
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  // Relations
+  brand       Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  category    BrandCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  
+  @@map("brand_services")
+}
+
+model Staff {
+  id          String    @id @default(cuid())
+  brandId     String
+  userId      String
+  name        String
+  email       String
+  phone       String?
+  role        StaffRole @default(STAFF)
+  specialties Json?     // Array of service categories stored as JSON
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  // Relations
+  brand       Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  user        User      @relation("StaffProfiles", fields: [userId], references: [id])
+  
+  @@unique([brandId, userId])
+  @@map("staff")
+}
+
+model Client {
+  id          String    @id @default(cuid())
+  brandId     String
+  name        String
+  email       String?
+  phone       String?
+  address     String?
+  notes       String?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  // Relations
+  brand       Brand     @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  
+  @@map("clients")
+}
+
+model Appointment {
+  id          String            @id @default(cuid())
+  brandId     String
+  clientId    String
+  staffId     String
+  serviceId   String
+  startTime   DateTime
+  endTime     DateTime
+  status      AppointmentStatus @default(SCHEDULED)
+  notes       String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  
+  // Relations
+  brand       Brand             @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  
+  @@map("appointments")
+}
+
+model Payment {
+  id          String        @id @default(cuid())
+  brandId     String
+  amount      Float
+  currency    String        @default("BDT")
+  method      PaymentMethod
+  status      PaymentStatus @default(PENDING)
+  description String?
+  metadata    Json?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  
+  // Relations
+  brand       Brand         @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  
+  @@map("payments")
+}
+
+// MLM and Referral System Models
+model Referral {
+  id              String          @id @default(cuid())
+  referrerId      String
+  referredId      String
+  brandId         String?
+  type            ReferralType    @default(USER_REFERRAL)
+  status          ReferralStatus  @default(PENDING)
+  commissionRate  Float           @default(0.1) // 10% default
+  commissionAmount Float?
+  level           Int             @default(1) // MLM level
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  
+  // Relations
+  referrer        User            @relation("ReferrerReferrals", fields: [referrerId], references: [id])
+  referred        User            @relation("ReferredUsers", fields: [referredId], references: [id])
+  brand           Brand?          @relation(fields: [brandId], references: [id])
+  commissions     Commission[]
+  
+  @@unique([referrerId, referredId, brandId])
+  @@map("referrals")
+}
+
+model Commission {
+  id              String            @id @default(cuid())
+  referralId      String
+  brandId         String
+  userId          String
+  amount          Float
+  type            CommissionType    @default(REFERRAL)
+  status          CommissionStatus  @default(PENDING)
+  level           Int               @default(1)
+  tokenAmount     Float?            // Token-based commission
+  description     String?
+  paidAt          DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  
+  // Relations
+  referral        Referral          @relation(fields: [referralId], references: [id])
+  brand           Brand             @relation(fields: [brandId], references: [id])
+  user            User              @relation("UserCommissions", fields: [userId], references: [id])
+  
+  @@map("commissions")
+}
+
+model TokenPackage {
+  id              String    @id @default(cuid())
+  name            String
+  description     String?
+  tokenAmount     Float
+  price           Float
+  currency        String    @default("BDT")
+  isActive        Boolean   @default(true)
+  features        Json?     // Package features
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  @@map("token_packages")
+}
+
+model UserToken {
+  id              String    @id @default(cuid())
+  userId          String
+  tokenAmount     Float     @default(0)
+  totalEarned     Float     @default(0)
+  totalSpent      Float     @default(0)
+  lastUpdated     DateTime  @default(now())
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  
+  // Relations
+  user            User      @relation("UserTokens", fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId])
+  @@map("user_tokens")
+}
+
+// Enums
+enum BrandStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING_APPROVAL
+}
+
+enum BrandRole {
+  OWNER
+  ADMIN
+  MANAGER
+  STAFF
+}
+
+enum MemberStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+  EXPIRED
+}
+
+enum StaffRole {
+  ADMIN
+  MANAGER
+  STAFF
+  RECEPTIONIST
+}
+
+enum AppointmentStatus {
+  SCHEDULED
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  BANK_TRANSFER
+  MOBILE_MONEY
+  CRYPTO
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REFUNDED
+}
+
+enum SubscriptionPlan {
+  BASIC
+  PREMIUM
+  ENTERPRISE
+  CUSTOM
+}
+
+enum ReferralType {
+  USER_REFERRAL
+  BRAND_REFERRAL
+  STAFF_REFERRAL
+}
+
+enum ReferralStatus {
+  PENDING
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum CommissionType {
+  REFERRAL
+  BRAND_CREATION
+  STAFF_REFERRAL
+  TOKEN_PURCHASE
+}
+
+enum CommissionStatus {
+  PENDING
+  APPROVED
+  PAID
+  CANCELLED
+}
